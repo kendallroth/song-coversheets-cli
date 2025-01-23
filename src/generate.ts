@@ -14,6 +14,8 @@ import {
   getPointAlongAngle,
 } from "./utilities/vector.util";
 
+// TODO: Convert border drawing to a single SVG line
+
 // NOTE: x/y coordinates are different than normal! 'x' starts on left side, but 'y' starts at bottom!
 
 interface GenerateDocumentsCommandArgs {
@@ -64,10 +66,8 @@ const generateSongDocument = async (
 
   drawBorders(page);
 
-  // TODO: Handle splitting lengthy titles into multiple lines!
   const titleFontSize = 48;
-  // const titleLocationY = height - inchesToUnits(2) - titleFontSize;
-  const titleLocationY = height - inchesToUnits(2);
+  const titleLocationY = height - inchesToUnits(2.5);
 
   const maxTitleWidth = width - MARGIN_SIZE * 4;
   const { height: titleHeight } = drawTextCentered(
@@ -79,7 +79,6 @@ const generateSongDocument = async (
   );
 
   const composerFontSize = 28;
-  // const composerLocationY = titleLocationY - inchesToUnits(0.5) - composerFontSize;
   const composerLocationY = titleLocationY - titleHeight - inchesToUnits(0.5) - composerFontSize;
 
   drawTextCentered(page, { y: composerLocationY }, song.composer, {
@@ -126,13 +125,13 @@ const drawBorders = (page: PDFPage) => {
     page.drawLine({
       start: point,
       end: nextPoint,
-      thickness: 1.5,
+      thickness: 2,
       lineCap: LineCapStyle.Round,
     });
   });
 
   /** Distance that decoration line moves when stepping around in corners */
-  const decorationStepDistance = 20;
+  const decorationStepDistance = 18;
   /**
    * Distance between thick decoration border and page edge
    *
@@ -149,11 +148,6 @@ const drawBorders = (page: PDFPage) => {
   thickBorderPoints.forEach((currentPoint, index, list) => {
     const nextPointIndex = index < list.length - 1 ? index + 1 : 0;
     const nextPoint = list[nextPointIndex];
-
-    // 1. Step 2 units towards next point (only applies at start)
-    // 2. Draw line towards next point, stopping 2 units away
-    // 3. Perform complicated border logic, stopping 2 units towards next point
-    // 4. Go back to Step 2
 
     const decorationThickness = 4;
 
@@ -222,8 +216,6 @@ const generateFooter = (
   input: GenerateDocumentsCommandArgs["input"],
   args: { font: PDFFont },
 ) => {
-  const { width } = page.getSize();
-
   // NOTE: Calculate year location first (to properly place group above)
 
   const yearFontSize = 18;

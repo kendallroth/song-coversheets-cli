@@ -12,7 +12,7 @@ export const drawTextCentered = (
   text: string,
   fontOptions: SetRequired<PDFPageDrawTextOptions, "font" | "size">,
   spacing?: {lineSpacing?: number; maxWidth: number}
-): {height: number} => {
+): {height: number, lines: number} => {
   const { width } = page.getSize();
 
   const initialWidth = fontOptions.font.widthOfTextAtSize(text, fontOptions.size);
@@ -40,7 +40,7 @@ export const drawTextCentered = (
   // Calculate total height so caller can position following elements correctly
   const totalHeight = location.y - drawLocationY;
 
-  return {height: totalHeight};
+  return {height: totalHeight, lines: textLines.length};
 };
 
 /** Split text quasi-evenly in half (by words) */
