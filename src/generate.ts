@@ -6,14 +6,13 @@ import { LineCapStyle, PDFDocument, type PDFFont, type PDFPage } from "pdf-lib";
 
 import type { Point } from "./types/vector.types";
 import { loadFont } from "./utilities/font.util";
+import { UNITS_TO_INCH, inchesToUnits } from "./utilities/pdf.util";
 import { drawTextCentered } from "./utilities/text.util";
 import {
   getAngleBetweenPoints,
   getDistanceBetweenPoints,
   getPointAlongAngle,
 } from "./utilities/vector.util";
-
-// TODO: Properly split lengthy titles
 
 // NOTE: x/y coordinates are different than normal! 'x' starts on left side, but 'y' starts at bottom!
 
@@ -34,11 +33,7 @@ interface Song {
   title: string;
 }
 
-/** PDF units per inch (according to PDF spec) */
-const UNITS_TO_INCH = 72;
 const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
-
-const inchesToUnits = (inches: number) => inches * UNITS_TO_INCH;
 
 /** Generate all coversheet PDFs */
 const generateAllDocuments = async (args: GenerateDocumentsCommandArgs) => {
@@ -65,7 +60,7 @@ const generateSongDocument = async (
   const fontBold = await loadFont(document, "Mulish-Bold.ttf");
 
   const page = document.addPage([inchesToUnits(8.5), inchesToUnits(11)]);
-  const { height } = page.getSize();
+  const { width, height } = page.getSize();
 
   drawBorders(page);
 
@@ -74,13 +69,18 @@ const generateSongDocument = async (
   // const titleLocationY = height - inchesToUnits(2) - titleFontSize;
   const titleLocationY = height - inchesToUnits(2);
 
-  drawTextCentered(page, { y: titleLocationY }, song.title, {
-    font: fontBold,
-    size: titleFontSize,
-  });
+  const maxTitleWidth = width - MARGIN_SIZE * 4;
+  const { height: titleHeight } = drawTextCentered(
+    page,
+    { y: titleLocationY },
+    song.title,
+    { font: fontBold, size: titleFontSize },
+    { lineSpacing: 10, maxWidth: maxTitleWidth },
+  );
 
   const composerFontSize = 28;
-  const composerLocationY = titleLocationY - inchesToUnits(0.5) - composerFontSize;
+  // const composerLocationY = titleLocationY - inchesToUnits(0.5) - composerFontSize;
+  const composerLocationY = titleLocationY - titleHeight - inchesToUnits(0.5) - composerFontSize;
 
   drawTextCentered(page, { y: composerLocationY }, song.composer, {
     font: fontItalic,
@@ -94,7 +94,9 @@ const generateSongDocument = async (
 
   const pdfBytes = await document.save();
   const currentDirectory = process.cwd();
-  const outputPrefix = args.parentArgs.output.filePathPrefix ? `${args.parentArgs.output.filePathPrefix}` : "output";
+  const outputPrefix = args.parentArgs.output.filePathPrefix
+    ? `${args.parentArgs.output.filePathPrefix}`
+    : "output";
   const outputPath = path.join(currentDirectory, `${outputPrefix}/${song.title} (Coversheet).pdf`);
   fs.writeFileSync(outputPath, pdfBytes);
 };
@@ -255,7 +257,7 @@ generateAllDocuments({
     year: 2025,
     songs: [
       { title: "Sample Song Title", composer: "Some Composer" },
-      { title: "You Are My Hiding Place", composer: "Michael Ledner" },
+      { title: "Longer Song Title That Should Wrap", composer: "Different Person" },
     ],
   },
   output: {
