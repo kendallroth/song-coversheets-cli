@@ -20,5 +20,7 @@ Generate song coversheets via a simple CLI
 > Coversheet meta information and song list is temporarily hardcoded (do not commit changes)!
 
 ```bash
-npx ts-node src/generate.ts
+npx tsx src/cli.ts -h
+
+npm run cli -- --help
 ```

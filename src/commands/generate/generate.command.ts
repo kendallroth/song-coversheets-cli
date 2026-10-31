@@ -1,57 +1,100 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { input } from "@inquirer/prompts";
 import fontkit from "@pdf-lib/fontkit";
+import chalk from "chalk";
+import { Argument, Command, Option } from "commander";
+import { parse as parseCsv } from "csv-parse/sync";
 import { LineCapStyle, PDFDocument, type PDFFont, type PDFPage } from "pdf-lib";
 
-import type { Point } from "./types/vector.types";
-import { loadFont } from "./utilities/font.util";
-import { UNITS_TO_INCH, inchesToUnits } from "./utilities/pdf.util";
-import { drawTextCentered } from "./utilities/text.util";
+import type { Point } from "../../types/vector.types";
+import { loadTextFile } from "../../utilities/file.util";
 import {
   getAngleBetweenPoints,
   getDistanceBetweenPoints,
   getPointAlongAngle,
-} from "./utilities/vector.util";
+} from "../../utilities/vector.util";
+import { UNITS_TO_INCH, drawTextCentered, inchesToUnits, loadFont } from "./generate.utils";
+import { type SongsheetCsvItem, songsheetCsvSchema } from "./schema";
 
-// TODO: Convert border drawing to a single SVG line
+export const generateCommand = new Command("generate-coversheets")
+  .description("Generate song cover sheets")
+  .addArgument(new Argument("<coversheetCsv>", "CSV file with coversheet data"))
+  .addOption(
+    new Option(
+      "--output-dir <outputDir>",
+      "Output directory for generated coversheets",
+    ).makeOptionMandatory(),
+  )
+  .addOption(new Option("--group <group>", "Group name (for coversheet footer)"))
+  .addOption(new Option("--year <year>", "Year (for coversheet footer)"));
 
-// NOTE: x/y coordinates are different than normal! 'x' starts on left side, but 'y' starts at bottom!
+type CommandOptions = ReturnType<(typeof generateCommand)["opts"]>;
 
-interface GenerateDocumentsCommandArgs {
-  input: {
-    group: string;
-    year: number;
-    songs: Song[];
-  };
-  output: {
-    /** Output file path (name will be appended) */
-    filePathPrefix?: string;
-  };
-}
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Command handler
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-interface Song {
-  composer: string;
-  title: string;
-}
+generateCommand.action(async (coversheetCsv, options) => {
+  let { group, year } = options;
+  if (!group || !year) {
+    console.log("Coversheet footer information");
+    if (!group) {
+      group = await input({ message: "Group name:", required: false });
+    }
+    if (!year) {
+      year = await input({
+        message: "Year:",
+        required: false,
+        default: new Date().getFullYear().toString(),
+      });
+    }
+  }
+
+  const songs = parseCsvFile(coversheetCsv);
+
+  for (const song of songs) {
+    await generateSongDocument(song, { ...options, group, year });
+  }
+
+  console.log(`Generated ${songs.length} coversheets`);
+  console.log(`Output to ${options.outputDir}`);
+});
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Functions
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
 
-/** Generate all coversheet PDFs */
-const generateAllDocuments = async (args: GenerateDocumentsCommandArgs) => {
-  const { input } = args;
+const parseCsvFile = (filePath: string) => {
+  let fileCsvString: string;
+  try {
+    fileCsvString = loadTextFile(filePath);
+  } catch (e) {
+    console.warn(chalk.yellow("Failed to load CSV file"));
+    throw e;
+  }
 
-  console.log(`Starting coversheet generation for ${input.songs.length} songs`);
+  const fileRecords = parseCsv(fileCsvString, {
+    columns: true,
+    skip_empty_lines: true,
+    trim: true,
+  });
 
-  for (const song of input.songs) {
-    await generateSongDocument(song, { parentArgs: args });
+  try {
+    return songsheetCsvSchema.validateSync(fileRecords, { stripUnknown: true });
+  } catch (e) {
+    console.warn(chalk.yellow("Failed to validate CSV file"));
+    throw e;
   }
 };
 
 /** Generate individual coversheet PDF */
 const generateSongDocument = async (
-  song: Song,
-  args: { parentArgs: GenerateDocumentsCommandArgs },
+  song: SongsheetCsvItem,
+  args: Pick<CommandOptions, "group" | "outputDir" | "year">,
 ) => {
   console.log(`Generating coversheet (${song.title})`);
 
@@ -87,16 +130,13 @@ const generateSongDocument = async (
     opacity: 0.7,
   });
 
-  generateFooter(page, args.parentArgs.input, { font: fontRegular });
+  generateFooter(page, args, { font: fontRegular });
 
   setDocumentMetadata(document, song);
 
   const pdfBytes = await document.save();
-  const currentDirectory = process.cwd();
-  const outputPrefix = args.parentArgs.output.filePathPrefix
-    ? `${args.parentArgs.output.filePathPrefix}`
-    : "output";
-  const outputPath = path.join(currentDirectory, `${outputPrefix}/${song.title} (Coversheet).pdf`);
+  const outputDir = path.resolve(process.cwd(), args.outputDir);
+  const outputPath = path.resolve(`${outputDir}/${song.title} (Coversheet).pdf`);
   fs.writeFileSync(outputPath, pdfBytes);
 };
 
@@ -213,7 +253,7 @@ const drawBorders = (page: PDFPage) => {
 
 const generateFooter = (
   page: PDFPage,
-  input: GenerateDocumentsCommandArgs["input"],
+  input: Pick<CommandOptions, "group" | "year">,
   args: { font: PDFFont },
 ) => {
   // NOTE: Calculate year location first (to properly place group above)
@@ -224,35 +264,25 @@ const generateFooter = (
   const groupFontSize = 28;
   const groupLocationY = yearLocationY + yearFontSize + inchesToUnits(0.25);
 
-  drawTextCentered(page, { y: groupLocationY }, input.group, {
-    font: args.font,
-    size: groupFontSize,
-    opacity: 0.8,
-  });
+  if (input.group) {
+    drawTextCentered(page, { y: groupLocationY }, input.group, {
+      font: args.font,
+      size: groupFontSize,
+      opacity: 0.8,
+    });
+  }
 
-  drawTextCentered(page, { y: yearLocationY }, input.year.toString(), {
-    font: args.font,
-    size: yearFontSize,
-    opacity: 0.6,
-  });
+  if (input.year) {
+    drawTextCentered(page, { y: yearLocationY }, input.year.toString(), {
+      font: args.font,
+      size: yearFontSize,
+      opacity: 0.6,
+    });
+  }
 };
 
 /** Set document metadata */
-const setDocumentMetadata = (document: PDFDocument, song: Song) => {
+const setDocumentMetadata = (document: PDFDocument, song: SongsheetCsvItem) => {
   document.setTitle(song.title);
   document.setAuthor("Kendall Roth");
 };
-
-generateAllDocuments({
-  input: {
-    group: "Group Name",
-    year: 2025,
-    songs: [
-      { title: "Sample Song Title", composer: "Some Composer" },
-      { title: "Longer Song Title That Should Wrap", composer: "Different Person" },
-    ],
-  },
-  output: {
-    filePathPrefix: undefined,
-  },
-});

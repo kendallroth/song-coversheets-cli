@@ -1,5 +1,30 @@
-import type { PDFPage, PDFPageDrawTextOptions } from "pdf-lib";
+import fs from "node:fs";
+import path from "node:path";
+
+import type { PDFDocument, PDFFont, PDFPage, PDFPageDrawTextOptions } from "pdf-lib";
 import type { SetRequired } from "type-fest";
+
+import { FONTS_DIR } from "../../assets/assets";
+
+/** PDF units per inch (according to PDF spec) */
+export const UNITS_TO_INCH = 72;
+
+/** Convert inches to PDF units (at 1:72 ratio) */
+export const inchesToUnits = (inches: number) => inches * UNITS_TO_INCH;
+
+/** Load font into document from filesystem */
+export const loadFont = async (document: PDFDocument, fontName: string): Promise<PDFFont> => {
+  const fontPath = path.join(FONTS_DIR, fontName);
+
+  let fontBytes: Buffer;
+  try {
+    fontBytes = fs.readFileSync(fontPath);
+  } catch (e) {
+    throw new Error(`Failed to load font '${fontName}' from '${fontPath}'`, { cause: e });
+  }
+
+  return document.embedFont(fontBytes);
+};
 
 /**
  * Draw centered text
@@ -11,8 +36,8 @@ export const drawTextCentered = (
   location: { y: number },
   text: string,
   fontOptions: SetRequired<PDFPageDrawTextOptions, "font" | "size">,
-  spacing?: {lineSpacing?: number; maxWidth: number}
-): {height: number, lines: number} => {
+  spacing?: { lineSpacing?: number; maxWidth: number },
+): { height: number; lines: number } => {
   const { width } = page.getSize();
 
   const initialWidth = fontOptions.font.widthOfTextAtSize(text, fontOptions.size);
@@ -40,7 +65,7 @@ export const drawTextCentered = (
   // Calculate total height so caller can position following elements correctly
   const totalHeight = location.y - drawLocationY;
 
-  return {height: totalHeight, lines: textLines.length};
+  return { height: totalHeight, lines: textLines.length };
 };
 
 /** Split text quasi-evenly in half (by words) */
