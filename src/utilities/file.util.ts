@@ -5,11 +5,13 @@ import fs from "node:fs";
  *
  * @throws Error if reading file fails
  */
-export const loadTextFile = (filePath: string): string => {
+export const loadTextFile = (filePath: string, errorLog: "log" | "skip" = "skip"): string => {
   try {
     return fs.readFileSync(filePath, "utf-8");
   } catch (e) {
-    console.error("Failed reading text file");
+    if (errorLog === "log") {
+      console.error("Failed reading text file");
+    }
     throw e;
   }
 };

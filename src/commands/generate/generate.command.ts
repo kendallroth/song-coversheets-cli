@@ -37,6 +37,13 @@ type CommandOptions = ReturnType<(typeof generateCommand)["opts"]>;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 generateCommand.action(async (coversheetCsv, options) => {
+  let songs: SongsheetCsvItem[];
+  try {
+    songs = parseCsvFile(coversheetCsv);
+  } catch (e) {
+    return generateCommand.error("Could not load/parse CSV file");
+  }
+
   let { group, year } = options;
   if (!group || !year) {
     console.log("Coversheet footer information");
@@ -52,8 +59,6 @@ generateCommand.action(async (coversheetCsv, options) => {
     }
   }
 
-  const songs = parseCsvFile(coversheetCsv);
-
   for (const song of songs) {
     await generateSongDocument(song, { ...options, group, year });
   }
@@ -68,6 +73,7 @@ generateCommand.action(async (coversheetCsv, options) => {
 
 const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
 
+/** NOTE: Errors are already logged */
 const parseCsvFile = (filePath: string) => {
   let fileCsvString: string;
   try {
