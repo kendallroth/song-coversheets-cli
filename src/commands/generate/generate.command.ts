@@ -59,12 +59,16 @@ generateCommand.action(async (coversheetCsv, options) => {
     }
   }
 
+  // Ensure output directory (and any parents) exists before writing files
+  const outputDir = path.resolve(process.cwd(), options.outputDir);
+  fs.mkdirSync(outputDir, { recursive: true });
+
   for (const song of songs) {
-    await generateSongDocument(song, { ...options, group, year });
+    await generateSongDocument(song, { outputDir, group, year });
   }
 
   console.log(`Generated ${songs.length} coversheets`);
-  console.log(`Output to ${options.outputDir}`);
+  console.log(`Output to ${outputDir}`);
 });
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -141,8 +145,7 @@ const generateSongDocument = async (
   setDocumentMetadata(document, song);
 
   const pdfBytes = await document.save();
-  const outputDir = path.resolve(process.cwd(), args.outputDir);
-  const outputPath = path.resolve(`${outputDir}/${song.title} (Coversheet).pdf`);
+  const outputPath = path.join(args.outputDir, `${song.title} (Coversheet).pdf`);
   fs.writeFileSync(outputPath, pdfBytes);
 };
 
