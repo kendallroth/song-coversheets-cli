@@ -3,14 +3,18 @@ import path from "node:path";
 
 import { input } from "@inquirer/prompts";
 import fontkit from "@pdf-lib/fontkit";
-import chalk from "chalk";
 import { Argument, Command, Option } from "commander";
-import { parse as parseCsv } from "csv-parse/sync";
 import { LineCapStyle, PDFDocument, type PDFFont, type PDFPage } from "pdf-lib";
 
+import { parseCsvFile } from "#src/utilities/file.util";
 import type { Point } from "#types/vector.types";
-import { loadTextFile } from "#utils/file.util";
-import { UNITS_TO_INCH, drawTextCentered, inchesToUnits, loadFont } from "#utils/pdf.util";
+import {
+  UNITS_TO_INCH,
+  drawTextCentered,
+  inchesToUnits,
+  loadFont,
+  setDocumentMetadata,
+} from "#utils/pdf.util";
 import {
   getAngleBetweenPoints,
   getDistanceBetweenPoints,
@@ -24,7 +28,7 @@ export const generateCommand = new Command("generate-coversheets")
   .addOption(
     new Option(
       "--output-dir <outputDir>",
-      "Output directory for generated coversheets",
+      "Output directory for generated files",
     ).makeOptionMandatory(),
   )
   .addOption(new Option("--group <group>", "Group name (for coversheet footer)"))
@@ -39,7 +43,7 @@ type CommandOptions = ReturnType<(typeof generateCommand)["opts"]>;
 generateCommand.action(async (coversheetCsv, options) => {
   let songs: SongsheetCsvItem[];
   try {
-    songs = parseCsvFile(coversheetCsv);
+    songs = parseCsvFile(coversheetCsv, songsheetCsvSchema, "log");
   } catch (e) {
     return generateCommand.error("Could not load/parse CSV file");
   }
@@ -76,30 +80,6 @@ generateCommand.action(async (coversheetCsv, options) => {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
-
-/** NOTE: Errors are already logged */
-const parseCsvFile = (filePath: string) => {
-  let fileCsvString: string;
-  try {
-    fileCsvString = loadTextFile(filePath);
-  } catch (e) {
-    console.warn(chalk.yellow("Failed to load CSV file"));
-    throw e;
-  }
-
-  const fileRecords = parseCsv(fileCsvString, {
-    columns: true,
-    skip_empty_lines: true,
-    trim: true,
-  });
-
-  try {
-    return songsheetCsvSchema.validateSync(fileRecords, { stripUnknown: true });
-  } catch (e) {
-    console.warn(chalk.yellow("Failed to validate CSV file"));
-    throw e;
-  }
-};
 
 /** Generate individual coversheet PDF */
 const generateSongDocument = async (
@@ -288,10 +268,4 @@ const generateFooter = (
       opacity: 0.6,
     });
   }
-};
-
-/** Set document metadata */
-const setDocumentMetadata = (document: PDFDocument, song: SongsheetCsvItem) => {
-  document.setTitle(song.title);
-  document.setAuthor("Kendall Roth");
 };

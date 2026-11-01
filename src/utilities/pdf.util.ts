@@ -68,3 +68,12 @@ export const drawTextCentered = (
 
   return { height: totalHeight, lines: textLines.length };
 };
+
+/** Set document metadata */
+export const setDocumentMetadata = (
+  document: PDFDocument,
+  data: { title: string; author?: string },
+) => {
+  document.setTitle(data.title);
+  document.setAuthor(data.author ?? "Kendall Roth");
+};
