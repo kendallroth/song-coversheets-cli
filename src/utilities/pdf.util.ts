@@ -4,7 +4,7 @@ import path from "node:path";
 import type { PDFDocument, PDFFont, PDFPage, PDFPageDrawTextOptions } from "pdf-lib";
 import type { SetRequired } from "type-fest";
 
-import { FONTS_DIR } from "../assets/assets";
+import { FONTS_DIR } from "#assets/assets.constants";
 import { splitTextEvenly } from "./text.util";
 
 /** PDF units per inch (according to PDF spec) */

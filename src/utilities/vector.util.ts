@@ -1,4 +1,4 @@
-import type { Point } from "../types/vector.types";
+import type { Point } from "#types/vector.types";
 
 /** Get point along an angle by distance */
 export const getPointAlongAngle = (origin: Point, angle: number, distance: number) => {

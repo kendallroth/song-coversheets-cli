@@ -8,14 +8,14 @@ import { Argument, Command, Option } from "commander";
 import { parse as parseCsv } from "csv-parse/sync";
 import { LineCapStyle, PDFDocument, type PDFFont, type PDFPage } from "pdf-lib";
 
-import type { Point } from "../../types/vector.types";
-import { loadTextFile } from "../../utilities/file.util";
-import { UNITS_TO_INCH, drawTextCentered, inchesToUnits, loadFont } from "../../utilities/pdf.util";
+import type { Point } from "#types/vector.types";
+import { loadTextFile } from "#utils/file.util";
+import { UNITS_TO_INCH, drawTextCentered, inchesToUnits, loadFont } from "#utils/pdf.util";
 import {
   getAngleBetweenPoints,
   getDistanceBetweenPoints,
   getPointAlongAngle,
-} from "../../utilities/vector.util";
+} from "#utils/vector.util";
 import { type SongsheetCsvItem, songsheetCsvSchema } from "./schema";
 
 export const generateCommand = new Command("generate-coversheets")

@@ -3,6 +3,13 @@
   "version": "1.0.0",
   "description": "Simple CLI for generating song coversheets",
   "type": "module",
+  "imports": {
+    "#assets/*": "./src/assets/*.ts",
+    "#commands/*": "./src/commands/*.ts",
+    "#src/*": "./src/*.ts",
+    "#types/*": "./src/types/*.ts",
+    "#utils/*": "./src/utilities/*.ts"
+  },
   "scripts": {
     "cli": "tsx src/cli.ts",
     "code:format": "biome format --write src/",
