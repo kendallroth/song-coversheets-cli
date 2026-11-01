@@ -4,7 +4,8 @@ import path from "node:path";
 import type { PDFDocument, PDFFont, PDFPage, PDFPageDrawTextOptions } from "pdf-lib";
 import type { SetRequired } from "type-fest";
 
-import { FONTS_DIR } from "../../assets/assets";
+import { FONTS_DIR } from "../assets/assets";
+import { splitTextEvenly } from "./text.util";
 
 /** PDF units per inch (according to PDF spec) */
 export const UNITS_TO_INCH = 72;
@@ -66,22 +67,4 @@ export const drawTextCentered = (
   const totalHeight = location.y - drawLocationY;
 
   return { height: totalHeight, lines: textLines.length };
-};
-
-/** Split text quasi-evenly in half (by words) */
-export const splitTextEvenly = (text: string): string[] => {
-  const words = text.split(" ");
-  let bestSplit = { diff: Number.POSITIVE_INFINITY, left: "", right: "'" };
-
-  for (let i = 1; i < words.length; i++) {
-    const left = words.slice(0, i).join(" ");
-    const right = words.slice(i).join(" ");
-    const diff = Math.abs(left.length - right.length);
-
-    if (diff < bestSplit.diff) {
-      bestSplit = { diff, left, right };
-    }
-  }
-
-  return [bestSplit.left, bestSplit.right];
 };
