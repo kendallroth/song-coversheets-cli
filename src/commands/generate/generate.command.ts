@@ -23,17 +23,12 @@ export const generateCommand = new Command("generate-coversheets")
   .description("Generate song cover sheets")
   .addArgument(new Argument("<coversheetCsv>", "CSV file with coversheet data"))
   .addOption(
-    new Option(
-      "--output-dir <outputDir>",
-      "Output directory for generated files",
-    ).makeOptionMandatory(),
+    new Option("--output-dir <outputDir>", "Output directory for generated files").makeOptionMandatory(),
   )
   .addOption(new Option("--group <group>", "Group name (for coversheet footer)"))
   .addOption(new Option("--year <year>", "Year (for coversheet footer)"))
   .addOption(new Option("--songsheets-dir <songsheetDir>", "Input directory for songsheet files"))
-  .addOption(
-    new Option("--merged-suffix <suffix>", "File suffix for merged files").default("(combined)"),
-  );
+  .addOption(new Option("--merged-suffix <suffix>", "File suffix for merged files").default("(combined)"));
 
 export type GenerateCommandOptions = ReturnType<(typeof generateCommand)["opts"]>;
 
@@ -83,11 +78,7 @@ generateCommand.action(async (coversheetCsv, options) => {
   let songsheetMatches: (LoadedPdf | undefined)[] = [];
   if (inputSongsheets.length) {
     const initialMatches = findSongsheetMatches(coversheetInputs, inputSongsheets);
-    songsheetMatches = await reviewSongsheetMatches(
-      coversheetInputs,
-      inputSongsheets,
-      initialMatches,
-    );
+    songsheetMatches = await reviewSongsheetMatches(coversheetInputs, inputSongsheets, initialMatches);
   }
 
   // Ensure output directory (and any parents) exists before writing files
@@ -106,11 +97,7 @@ generateCommand.action(async (coversheetCsv, options) => {
     const songsheetPdf = songsheetMatches[songIndex]?.document;
     if (songsheetPdf) {
       await appendPdfPages(coversheetPdf, songsheetPdf);
-      await writePdfDocument(
-        coversheetPdf,
-        `${song.title} ${options.mergedSuffix.trim()}`,
-        outputDir,
-      );
+      await writePdfDocument(coversheetPdf, `${song.title} ${options.mergedSuffix.trim()}`, outputDir);
       combinedCount++;
     } else if (options.songsheetsDir) {
       console.warn(chalk.yellow("   - no songsheet"));

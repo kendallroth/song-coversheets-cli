@@ -3,11 +3,7 @@ import { LineCapStyle, PDFDocument, type PDFFont, type PDFPage } from "pdf-lib";
 
 import type { Point } from "#types/vector.types";
 import { drawTextCentered, inchesToUnits, loadFont, setDocumentMetadata } from "#utils/pdf.util";
-import {
-  getAngleBetweenPoints,
-  getDistanceBetweenPoints,
-  getPointAlongAngle,
-} from "#utils/vector.util";
+import { getAngleBetweenPoints, getDistanceBetweenPoints, getPointAlongAngle } from "#utils/vector.util";
 import { type GenerateCommandOptions, MARGIN_SIZE } from "./generate.command";
 import type { SongsheetCsvItem } from "./generate.schema";
 
@@ -110,11 +106,7 @@ const drawCoversheetBorders = (page: PDFPage) => {
 
     const distanceBetweenPoints = getDistanceBetweenPoints(currentPoint, nextPoint);
     /** Long page edge border should start where previous decoration (should have 😉) ended */
-    const borderStartPoint = getPointAlongAngle(
-      currentPoint,
-      drawAngle,
-      decorationStepDistance * 2,
-    );
+    const borderStartPoint = getPointAlongAngle(currentPoint, drawAngle, decorationStepDistance * 2);
     /** Long page edge border should end where next decoration should start */
     const decorationStartPoint = getPointAlongAngle(
       currentPoint,
@@ -149,11 +141,7 @@ const drawCoversheetBorders = (page: PDFPage) => {
     decorationMovements.forEach((movement) => {
       const startPoint = drawPoint;
       drawAngle += movement.angle;
-      const nextPoint = getPointAlongAngle(
-        drawPoint,
-        drawAngle,
-        movement.steps * decorationStepDistance,
-      );
+      const nextPoint = getPointAlongAngle(drawPoint, drawAngle, movement.steps * decorationStepDistance);
       drawPoint = nextPoint;
 
       page.drawLine({

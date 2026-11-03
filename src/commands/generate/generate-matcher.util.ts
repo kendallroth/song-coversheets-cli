@@ -87,9 +87,7 @@ export const reviewSongsheetMatches = async (
       const fileName = matches[songIndex]?.fileName;
 
       return {
-        name: fileName
-          ? `${title}  →  ${fileName}`
-          : chalk.yellow(`${title}  →  ${NO_SONGSHEET_LABEL}`),
+        name: fileName ? `${title}  →  ${fileName}` : chalk.yellow(`${title}  →  ${NO_SONGSHEET_LABEL}`),
         value: songIndex as number | "continue",
       };
     });

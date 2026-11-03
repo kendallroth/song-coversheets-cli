@@ -75,11 +75,7 @@ export const appendPdfPages = async (target: PDFDocument, source: PDFDocument) =
  * @param fileName - File name (without extension)
  * @throws Error if output directory does not exist or writing file fails
  */
-export const writePdfDocument = async (
-  document: PDFDocument,
-  fileName: string,
-  filePath: string,
-) => {
+export const writePdfDocument = async (document: PDFDocument, fileName: string, filePath: string) => {
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isDirectory()) {
     throw new Error(`Output directory does not exist: ${filePath}`);
   }
@@ -132,10 +128,7 @@ export const drawTextCentered = (
 };
 
 /** Set document metadata */
-export const setDocumentMetadata = (
-  document: PDFDocument,
-  data: { title: string; author?: string },
-) => {
+export const setDocumentMetadata = (document: PDFDocument, data: { title: string; author?: string }) => {
   document.setTitle(data.title);
   document.setAuthor(data.author ?? "Kendall Roth");
 };
