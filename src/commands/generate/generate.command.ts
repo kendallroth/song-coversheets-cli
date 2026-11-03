@@ -30,7 +30,8 @@ export const generateCommand = new Command("generate-coversheets")
   .addOption(new Option("--group <group>", "Group name (for coversheet footer)"))
   .addOption(new Option("--year <year>", "Year (for coversheet footer)"))
   .addOption(new Option("--songsheets-dir <songsheetDir>", "Input directory for songsheet files"))
-  .addOption(new Option("--merged-suffix <suffix>", "File suffix for merged files").default("(combined)"));
+  .addOption(new Option("--merged-suffix <suffix>", "File suffix for merged files").default("(final)"))
+  .addOption(new Option("--skip-all", "Start with all songs skipped (requires --songsheets-dir)"));
 
 export type GenerateCommandOptions = ReturnType<(typeof generateCommand)["opts"]>;
 
@@ -39,6 +40,11 @@ export type GenerateCommandOptions = ReturnType<(typeof generateCommand)["opts"]
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 generateCommand.action(async (coversheetCsv, options) => {
+  // NOTE: Songs can only be included again from the review list, which requires songsheets input
+  if (options.skipAll && !options.songsheetsDir) {
+    return generateCommand.error("--skip-all requires --songsheets-dir");
+  }
+
   let coversheetInputs: SongsheetCsvItem[];
   try {
     coversheetInputs = parseCsvFile(coversheetCsv, songsheetCsvSchema, "log");
@@ -80,7 +86,12 @@ generateCommand.action(async (coversheetCsv, options) => {
   let reviewedSongs: ReviewedSong[] = coversheetInputs.map(() => ({ output: "all" }));
   if (inputSongsheets.length) {
     const initialMatches = findSongsheetMatches(coversheetInputs, inputSongsheets);
-    reviewedSongs = await reviewSongsheetMatches(coversheetInputs, inputSongsheets, initialMatches);
+    reviewedSongs = await reviewSongsheetMatches(
+      coversheetInputs,
+      inputSongsheets,
+      initialMatches,
+      options.skipAll ? "skip" : "all",
+    );
   }
 
   // Ensure output directory (and any parents) exists before writing files
@@ -102,7 +113,7 @@ generateCommand.action(async (coversheetCsv, options) => {
 
     /** Document that songsheet pages are appended to (coversheet, unless excluded from output) */
     let outputPdf: PDFDocument;
-    if (output === "combined") {
+    if (output === "songsheet") {
       outputPdf = await PDFDocument.create();
       setDocumentMetadata(outputPdf, song);
     } else {
@@ -117,11 +128,11 @@ generateCommand.action(async (coversheetCsv, options) => {
 
     if (songsheetMatch) {
       await appendPdfPages(outputPdf, songsheetMatch.file.document, songsheetMatch.pageIndices);
-      const combinedFileName = `${song.title} ${options.mergedSuffix.trim()}`.trim();
-      await writePdfDocument(outputPdf, combinedFileName, outputDir);
+      const outputFileName = `${song.title} ${options.mergedSuffix.trim()}`.trim();
+      await writePdfDocument(outputPdf, outputFileName, outputDir);
       combinedCount++;
     } else if (options.songsheetsDir) {
-      console.warn(chalk.yellow(`   - no songsheet${output === "combined" ? " (nothing written)" : ""}`));
+      console.warn(chalk.yellow(`   - no songsheet${output === "songsheet" ? " (nothing written)" : ""}`));
     }
   }
 

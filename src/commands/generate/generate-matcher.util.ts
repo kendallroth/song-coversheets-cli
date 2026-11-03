@@ -17,7 +17,7 @@ export interface SongsheetMatch {
 }
 
 /** Files to generate for a song */
-export type SongOutput = "all" | "coversheet" | "combined" | "skip";
+export type SongOutput = "all" | "coversheet" | "songsheet" | "skip";
 
 /** Reviewed song options */
 export type ReviewedSong = {
@@ -28,16 +28,16 @@ export type ReviewedSong = {
 
 /** Labels for choosing a song's output */
 const SONG_OUTPUT_LABELS: Record<SongOutput, string> = {
-  all: "Coversheet and combined",
+  all: "Coversheet and songsheet",
   coversheet: "Coversheet only",
-  combined: "Combined only",
+  songsheet: "Songsheet only",
   skip: "Skip song",
 };
 
 /** Labels for review list rows (default output is not indicated) */
 const SONG_OUTPUT_ROW_LABELS: Partial<Record<SongOutput, string>> = {
   coversheet: "coversheet only",
-  combined: "combined only",
+  songsheet: "songsheet only",
 };
 
 /** Create fuzzy search over songsheet file names (without extensions) */
@@ -177,6 +177,7 @@ export const reviewSongsheetMatches = async (
   songs: { title: string }[],
   songsheets: LoadedPdf[],
   initialMatches: (LoadedPdf | undefined)[],
+  initialOutput: SongOutput,
 ): Promise<ReviewedSong[]> => {
   const toMatch = (file: LoadedPdf): SongsheetMatch => ({
     file,
@@ -184,7 +185,7 @@ export const reviewSongsheetMatches = async (
   });
 
   const songsheetMatches = initialMatches.map((file) => (file ? toMatch(file) : undefined));
-  const songOutputs = songs.map((): SongOutput => "all");
+  const songOutputs = songs.map(() => initialOutput);
 
   const titleWidth = Math.max(...songs.map((song) => song.title.length));
 
