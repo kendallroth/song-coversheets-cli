@@ -137,7 +137,6 @@ const drawCoversheetBorders = (page: PDFPage) => {
     ];
 
     let drawPoint = decorationStartPoint;
-    // biome-ignore lint/complexity/noForEach: 'foreach' was used in case the index was required 🤷
     decorationMovements.forEach((movement) => {
       const startPoint = drawPoint;
       drawAngle += movement.angle;

@@ -15,4 +15,4 @@ process.on("uncaughtException", (error) => {
   }
 });
 
-cli.parseAsync(process.argv);
+await cli.parseAsync(process.argv);

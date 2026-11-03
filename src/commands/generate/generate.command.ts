@@ -7,15 +7,15 @@ import { Argument, Command, Option } from "commander";
 
 import { parseCsvFile } from "#utils/file.util";
 import {
-  type LoadedPdf,
-  UNITS_TO_INCH,
   appendPdfPages,
+  type LoadedPdf,
   loadPdfsFromDirectory,
+  UNITS_TO_INCH,
   writePdfDocument,
 } from "#utils/pdf.util";
+import { type SongsheetCsvItem, songsheetCsvSchema } from "./generate.schema";
 import { generateCoversheet } from "./generate-coversheet.util";
 import { findSongsheetMatches, reviewSongsheetMatches } from "./generate-matcher.util";
-import { type SongsheetCsvItem, songsheetCsvSchema } from "./generate.schema";
 
 export const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
 
@@ -40,7 +40,7 @@ generateCommand.action(async (coversheetCsv, options) => {
   let coversheetInputs: SongsheetCsvItem[];
   try {
     coversheetInputs = parseCsvFile(coversheetCsv, songsheetCsvSchema, "log");
-  } catch (e) {
+  } catch {
     return generateCommand.error("Could not load/parse CSV file");
   }
 
