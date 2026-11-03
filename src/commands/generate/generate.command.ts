@@ -22,7 +22,7 @@ import { findSongsheetMatches, type ReviewedSong, reviewSongsheetMatches } from 
 export const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
 
 export const generateCommand = new Command("generate-coversheets")
-  .description("Generate song cover sheets")
+  .description("Generate song cover sheets and combine with songsheets")
   .addArgument(new Argument("<coversheetCsv>", "CSV file with coversheet data"))
   .addOption(
     new Option("--output-dir <outputDir>", "Output directory for generated files").makeOptionMandatory(),
