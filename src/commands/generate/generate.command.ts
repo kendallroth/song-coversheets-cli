@@ -4,18 +4,20 @@ import path from "node:path";
 import { input } from "@inquirer/prompts";
 import chalk from "chalk";
 import { Argument, Command, Option } from "commander";
+import { PDFDocument } from "pdf-lib";
 
 import { parseCsvFile } from "#utils/file.util";
 import {
   appendPdfPages,
   type LoadedPdf,
   loadPdfsFromDirectory,
+  setDocumentMetadata,
   UNITS_TO_INCH,
   writePdfDocument,
 } from "#utils/pdf.util";
 import { type SongsheetCsvItem, songsheetCsvSchema } from "./generate.schema";
 import { generateCoversheet } from "./generate-coversheet.util";
-import { findSongsheetMatches, reviewSongsheetMatches, type SongsheetMatch } from "./generate-matcher.util";
+import { findSongsheetMatches, type ReviewedSong, reviewSongsheetMatches } from "./generate-matcher.util";
 
 export const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
 
@@ -75,39 +77,60 @@ generateCommand.action(async (coversheetCsv, options) => {
   year = year?.trim();
 
   // Find suggested songsheet file matches for coversheets (with option to change/review)
-  let songsheetMatches: (SongsheetMatch | undefined)[] = [];
+  let reviewedSongs: ReviewedSong[] = coversheetInputs.map(() => ({ output: "all" }));
   if (inputSongsheets.length) {
     const initialMatches = findSongsheetMatches(coversheetInputs, inputSongsheets);
-    songsheetMatches = await reviewSongsheetMatches(coversheetInputs, inputSongsheets, initialMatches);
+    reviewedSongs = await reviewSongsheetMatches(coversheetInputs, inputSongsheets, initialMatches);
   }
 
   // Ensure output directory (and any parents) exists before writing files
   const outputDir = path.resolve(process.cwd(), options.outputDir);
   fs.mkdirSync(outputDir, { recursive: true });
 
+  let coversheetCount = 0;
   let combinedCount = 0;
+  let skippedCount = 0;
   for (const [songIndex, song] of coversheetInputs.entries()) {
+    const { output, songsheetMatch } = reviewedSongs[songIndex];
+    if (output === "skip") {
+      console.log(chalk.gray(` - Skipping: 🚫 ${song.title}`));
+      skippedCount++;
+      continue;
+    }
+
     console.log(chalk.gray(` - Generating: ${song.title}`));
 
-    const coversheetPdf = await generateCoversheet(song, { group, year });
+    /** Document that songsheet pages are appended to (coversheet, unless excluded from output) */
+    let outputPdf: PDFDocument;
+    if (output === "combined") {
+      outputPdf = await PDFDocument.create();
+      setDocumentMetadata(outputPdf, song);
+    } else {
+      outputPdf = await generateCoversheet(song, { group, year });
 
-    // NOTE: Coversheet must be written first, as appending songsheet pages modifies the document!
-    await writePdfDocument(coversheetPdf, `${song.title} (coversheet)`, outputDir);
+      // NOTE: Coversheet must be written first, as appending songsheet pages modifies the document!
+      await writePdfDocument(outputPdf, `${song.title} (coversheet)`, outputDir);
+      coversheetCount++;
+    }
 
-    const songsheetMatch = songsheetMatches[songIndex];
+    if (output === "coversheet") continue;
+
     if (songsheetMatch) {
-      await appendPdfPages(coversheetPdf, songsheetMatch.file.document, songsheetMatch.pageIndices);
+      await appendPdfPages(outputPdf, songsheetMatch.file.document, songsheetMatch.pageIndices);
       const combinedFileName = `${song.title} ${options.mergedSuffix.trim()}`.trim();
-      await writePdfDocument(coversheetPdf, combinedFileName, outputDir);
+      await writePdfDocument(outputPdf, combinedFileName, outputDir);
       combinedCount++;
     } else if (options.songsheetsDir) {
-      console.warn(chalk.yellow("   - no songsheet"));
+      console.warn(chalk.yellow(`   - no songsheet${output === "combined" ? " (nothing written)" : ""}`));
     }
   }
 
-  let successMessage = `Generated ${coversheetInputs.length} coversheets`;
+  let successMessage = `Generated ${coversheetCount} coversheets`;
   if (inputSongsheets.length) {
     successMessage += ` and ${combinedCount} combined files`;
+  }
+  if (skippedCount) {
+    successMessage += ` (${skippedCount} ${skippedCount === 1 ? "song" : "songs"} skipped)`;
   }
   console.log(chalk.green(successMessage));
   console.log(chalk.gray(`Output to ${outputDir}`));

@@ -16,6 +16,30 @@ export interface SongsheetMatch {
   pageIndices: number[];
 }
 
+/** Files to generate for a song */
+export type SongOutput = "all" | "coversheet" | "combined" | "skip";
+
+/** Reviewed song options */
+export type ReviewedSong = {
+  /** Undefined if no songsheet was found/matched */
+  songsheetMatch?: SongsheetMatch;
+  output: SongOutput;
+};
+
+/** Labels for choosing a song's output */
+const SONG_OUTPUT_LABELS: Record<SongOutput, string> = {
+  all: "Coversheet and combined",
+  coversheet: "Coversheet only",
+  combined: "Combined only",
+  skip: "Skip song",
+};
+
+/** Labels for review list rows (default output is not indicated) */
+const SONG_OUTPUT_ROW_LABELS: Partial<Record<SongOutput, string>> = {
+  coversheet: "coversheet only",
+  combined: "combined only",
+};
+
 /** Create fuzzy search over songsheet file names (without extensions) */
 const createSongsheetSearch = (songsheets: LoadedPdf[]) => {
   const candidates = songsheets.map((file) => ({
@@ -147,19 +171,21 @@ const promptForPageRange = async ({ file, pageIndices }: SongsheetMatch): Promis
  *
  * Songsheets can only be used once; selecting one used by another song moves it to the selected song.
  *
- * @returns Reviewed songsheet (if any) for each song, in the same order as songs
+ * @returns Reviewed songsheet (if any) and output for each song, in the same order as songs
  */
 export const reviewSongsheetMatches = async (
   songs: { title: string }[],
   songsheets: LoadedPdf[],
   initialMatches: (LoadedPdf | undefined)[],
-): Promise<(SongsheetMatch | undefined)[]> => {
+): Promise<ReviewedSong[]> => {
   const toMatch = (file: LoadedPdf): SongsheetMatch => ({
     file,
     pageIndices: file.document.getPageIndices(),
   });
 
   const songsheetMatches = initialMatches.map((file) => (file ? toMatch(file) : undefined));
+  const songOutputs = songs.map((): SongOutput => "all");
+
   const titleWidth = Math.max(...songs.map((song) => song.title.length));
 
   type SongEditOptionIdx = number | "continue";
@@ -167,11 +193,24 @@ export const reviewSongsheetMatches = async (
   let activeSongEditOptionIdx: SongEditOptionIdx = "continue";
   while (true) {
     const songChoices = songs.map((song, songIndex) => {
-      const title = song.title.padEnd(titleWidth);
       const songsheetMatch = songsheetMatches[songIndex];
+      const output = songOutputs[songIndex];
+      const title = song.title.padEnd(titleWidth);
+      const outputLabel = SONG_OUTPUT_ROW_LABELS[output];
+
+      if (output === "skip") {
+        return { name: chalk.gray(`${title}  →  🚫 skipped`), value: songIndex as SongEditOptionIdx };
+      }
+
       if (!songsheetMatch) {
+        const noSongsheetLabel = outputLabel ? `(no songsheet, ${outputLabel})` : NO_SONGSHEET_LABEL;
+
         return {
-          name: chalk.yellow(`${title}  →  ${NO_SONGSHEET_LABEL}`),
+          // Only highlight a missing songsheet if one is needed
+          name:
+            output === "coversheet"
+              ? `${title}  →  ${chalk.gray(noSongsheetLabel)}`
+              : chalk.yellow(`${title}  →  ${noSongsheetLabel}`),
           value: songIndex as SongEditOptionIdx,
         };
       }
@@ -179,11 +218,12 @@ export const reviewSongsheetMatches = async (
       // Only indicate selected pages when some have been excluded
       const pagesLabel =
         songsheetMatch.pageIndices.length < songsheetMatch.file.pages
-          ? chalk.gray(` (p. ${formatPageRange(songsheetMatch.pageIndices)} of ${songsheetMatch.file.pages})`)
-          : "";
+          ? `p. ${formatPageRange(songsheetMatch.pageIndices)} of ${songsheetMatch.file.pages}`
+          : undefined;
+      const rowLabels = [pagesLabel, outputLabel].filter(Boolean);
 
       return {
-        name: `${title}  →  ${songsheetMatch.file.fileName}${pagesLabel}`,
+        name: `${title}  →  ${songsheetMatch.file.fileName}${rowLabels.length ? chalk.gray(` (${rowLabels.join(", ")})`) : ""}`,
         value: songIndex as SongEditOptionIdx,
       };
     });
@@ -205,7 +245,7 @@ export const reviewSongsheetMatches = async (
     const songIndex: number = activeSongEditOptionIdx;
     const songsheetMatch = songsheetMatches[songIndex];
 
-    const songEditAction = await select<"songsheet" | "pages" | "back">(
+    const songEditAction = await select<"songsheet" | "pages" | "output" | "back">(
       {
         message: `"${songs[songIndex].title}"`,
         choices: [
@@ -220,6 +260,10 @@ export const reviewSongsheetMatches = async (
             value: "pages",
             disabled: songsheetMatch ? false : NO_SONGSHEET_LABEL,
           },
+          {
+            name: `Change output ${chalk.gray(`(${SONG_OUTPUT_LABELS[songOutputs[songIndex]]})`)}`,
+            value: "output",
+          },
           { name: "Back", value: "back" },
         ],
       },
@@ -228,6 +272,18 @@ export const reviewSongsheetMatches = async (
 
     if (songEditAction === "pages" && songsheetMatch) {
       songsheetMatch.pageIndices = await promptForPageRange(songsheetMatch);
+    } else if (songEditAction === "output") {
+      songOutputs[songIndex] = await select<SongOutput>(
+        {
+          message: `Output for "${songs[songIndex].title}"`,
+          choices: (Object.keys(SONG_OUTPUT_LABELS) as SongOutput[]).map((output) => ({
+            name: SONG_OUTPUT_LABELS[output],
+            value: output,
+          })),
+          default: songOutputs[songIndex],
+        },
+        { clearPromptOnDone: true },
+      );
     } else if (songEditAction === "songsheet") {
       const selectedFile = await promptForSongsheet(songs, songIndex, songsheets, songsheetMatches);
 
@@ -246,5 +302,8 @@ export const reviewSongsheetMatches = async (
   const matchedCount = songsheetMatches.filter(Boolean).length;
   console.log(`Matched ${matchedCount} of ${songs.length} songs to songsheets`);
 
-  return songsheetMatches;
+  return songs.map((_, songIndex) => ({
+    songsheetMatch: songsheetMatches[songIndex],
+    output: songOutputs[songIndex],
+  }));
 };
