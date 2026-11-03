@@ -4,12 +4,12 @@ import path from "node:path";
 import { input } from "@inquirer/prompts";
 import chalk from "chalk";
 import { Argument, Command, Option } from "commander";
-import type { PDFDocument } from "pdf-lib";
 
 import { parseCsvFile } from "#utils/file.util";
 import {
   type LoadedPdf,
   UNITS_TO_INCH,
+  appendPdfPages,
   loadPdfsFromDirectory,
   writePdfDocument,
 } from "#utils/pdf.util";
@@ -49,19 +49,20 @@ generateCommand.action(async (coversheetCsv, options) => {
     return generateCommand.error("Could not load/parse CSV file");
   }
 
-  let songsheetFiles: LoadedPdf[] = [];
+  /** Songsheet files loaded from input directory (for matching/combinging with coversheets) */
+  let inputSongsheets: LoadedPdf[] = [];
   if (options.songsheetsDir) {
     const songsheetsDir = path.resolve(process.cwd(), options.songsheetsDir);
     try {
-      songsheetFiles = await loadPdfsFromDirectory(songsheetsDir);
+      inputSongsheets = await loadPdfsFromDirectory(songsheetsDir);
     } catch (e) {
       console.error(chalk.red((e as Error).message));
       return generateCommand.error("Could not load songsheets");
     }
-    if (!songsheetFiles.length) {
+    if (!inputSongsheets.length) {
       return generateCommand.error("No songsheets loaded");
     }
-    console.log(`Loaded ${songsheetFiles.length} songsheets`);
+    console.log(`Loaded ${inputSongsheets.length} songsheets`);
   }
 
   let { group, year } = options;
@@ -80,11 +81,11 @@ generateCommand.action(async (coversheetCsv, options) => {
 
   // Find suggested songsheet file matches for coversheets (with option to change/review)
   let songsheetMatches: (LoadedPdf | undefined)[] = [];
-  if (songsheetFiles.length) {
-    const initialMatches = findSongsheetMatches(coversheetInputs, songsheetFiles);
+  if (inputSongsheets.length) {
+    const initialMatches = findSongsheetMatches(coversheetInputs, inputSongsheets);
     songsheetMatches = await reviewSongsheetMatches(
       coversheetInputs,
-      songsheetFiles,
+      inputSongsheets,
       initialMatches,
     );
   }
@@ -93,29 +94,33 @@ generateCommand.action(async (coversheetCsv, options) => {
   const outputDir = path.resolve(process.cwd(), options.outputDir);
   fs.mkdirSync(outputDir, { recursive: true });
 
-  /** Documents generated/matched for a song */
-  interface SongDocuments {
-    title: string;
-    composer: string;
-    coversheetPdf: PDFDocument;
-    /** Undefined if no songsheet was found/matched */
-    songsheetPdf?: PDFDocument;
-  }
-  const songDocuments: SongDocuments[] = [];
+  let combinedCount = 0;
   for (const [songIndex, song] of coversheetInputs.entries()) {
     console.log(chalk.gray(` - Generating: ${song.title}`));
+
     const coversheetPdf = await generateCoversheet(song, { group, year });
 
-    songDocuments.push({
-      title: song.title,
-      composer: song.composer,
-      coversheetPdf,
-      songsheetPdf: songsheetMatches[songIndex]?.document,
-    });
+    // NOTE: Coversheet must be written first, as appending songsheet pages modifies the document!
+    await writePdfDocument(coversheetPdf, `${song.title} (coversheet)`, outputDir);
 
-    await writePdfDocument(coversheetPdf, song.title, outputDir);
+    const songsheetPdf = songsheetMatches[songIndex]?.document;
+    if (songsheetPdf) {
+      await appendPdfPages(coversheetPdf, songsheetPdf);
+      await writePdfDocument(
+        coversheetPdf,
+        `${song.title} ${options.mergedSuffix.trim()}`,
+        outputDir,
+      );
+      combinedCount++;
+    } else if (options.songsheetsDir) {
+      console.warn(chalk.yellow("   - no songsheet"));
+    }
   }
 
-  console.log(`Generated ${coversheetInputs.length} coversheets`);
-  console.log(`Output to ${outputDir}`);
+  let successMessage = `Generated ${coversheetInputs.length} coversheets`;
+  if (inputSongsheets.length) {
+    successMessage += ` and ${combinedCount} combined files`;
+  }
+  console.log(chalk.green(successMessage));
+  console.log(chalk.gray(`Output to ${outputDir}`));
 });

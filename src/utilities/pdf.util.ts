@@ -61,18 +61,31 @@ export const loadPdfsFromDirectory = async (directoryPath: string): Promise<Load
   return pdfs;
 };
 
+/** Append all pages from source document to the end of target document */
+export const appendPdfPages = async (target: PDFDocument, source: PDFDocument) => {
+  const pages = await target.copyPages(source, source.getPageIndices());
+  for (const page of pages) {
+    target.addPage(page);
+  }
+};
+
 /**
  * Write a PDF file
  *
+ * @param fileName - File name (without extension)
  * @throws Error if output directory does not exist or writing file fails
  */
-export const writePdfDocument = async (document: PDFDocument, title: string, filePath: string) => {
+export const writePdfDocument = async (
+  document: PDFDocument,
+  fileName: string,
+  filePath: string,
+) => {
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isDirectory()) {
     throw new Error(`Output directory does not exist: ${filePath}`);
   }
 
   const pdfBytes = await document.save();
-  const outputPath = path.join(filePath, `${title} (Coversheet).pdf`);
+  const outputPath = path.join(filePath, `${fileName}.pdf`);
   fs.writeFileSync(outputPath, pdfBytes);
 };
 
