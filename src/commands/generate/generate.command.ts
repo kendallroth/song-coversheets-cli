@@ -2,50 +2,70 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { input } from "@inquirer/prompts";
-import fontkit from "@pdf-lib/fontkit";
+import chalk from "chalk";
 import { Argument, Command, Option } from "commander";
-import { LineCapStyle, PDFDocument, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument } from "pdf-lib";
 
-import { parseCsvFile } from "#src/utilities/file.util";
-import type { Point } from "#types/vector.types";
+import { parseCsvFile } from "#utils/file.util";
 import {
-  UNITS_TO_INCH,
-  drawTextCentered,
-  inchesToUnits,
-  loadFont,
+  appendPdfPages,
+  type LoadedPdf,
+  loadPdfsFromDirectory,
   setDocumentMetadata,
+  UNITS_TO_INCH,
+  writePdfDocument,
 } from "#utils/pdf.util";
-import {
-  getAngleBetweenPoints,
-  getDistanceBetweenPoints,
-  getPointAlongAngle,
-} from "#utils/vector.util";
-import { type SongsheetCsvItem, songsheetCsvSchema } from "./schema";
+import { type SongsheetCsvItem, songsheetCsvSchema } from "./generate.schema";
+import { generateCoversheet } from "./generate-coversheet.util";
+import { findSongsheetMatches, type ReviewedSong, reviewSongsheetMatches } from "./generate-matcher.util";
+
+export const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
 
 export const generateCommand = new Command("generate-coversheets")
-  .description("Generate song cover sheets")
+  .description("Generate song cover sheets and combine with songsheets")
   .addArgument(new Argument("<coversheetCsv>", "CSV file with coversheet data"))
   .addOption(
-    new Option(
-      "--output-dir <outputDir>",
-      "Output directory for generated files",
-    ).makeOptionMandatory(),
+    new Option("--output-dir <outputDir>", "Output directory for generated files").makeOptionMandatory(),
   )
   .addOption(new Option("--group <group>", "Group name (for coversheet footer)"))
-  .addOption(new Option("--year <year>", "Year (for coversheet footer)"));
+  .addOption(new Option("--year <year>", "Year (for coversheet footer)"))
+  .addOption(new Option("--songsheets-dir <songsheetDir>", "Input directory for songsheet files"))
+  .addOption(new Option("--merged-suffix <suffix>", "File suffix for merged files").default("(final)"))
+  .addOption(new Option("--skip-all", "Start with all songs skipped (requires --songsheets-dir)"));
 
-type CommandOptions = ReturnType<(typeof generateCommand)["opts"]>;
+export type GenerateCommandOptions = ReturnType<(typeof generateCommand)["opts"]>;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Command handler
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 generateCommand.action(async (coversheetCsv, options) => {
-  let songs: SongsheetCsvItem[];
+  // NOTE: Songs can only be included again from the review list, which requires songsheets input
+  if (options.skipAll && !options.songsheetsDir) {
+    return generateCommand.error("--skip-all requires --songsheets-dir");
+  }
+
+  let coversheetInputs: SongsheetCsvItem[];
   try {
-    songs = parseCsvFile(coversheetCsv, songsheetCsvSchema, "log");
-  } catch (e) {
+    coversheetInputs = parseCsvFile(coversheetCsv, songsheetCsvSchema, "log");
+  } catch {
     return generateCommand.error("Could not load/parse CSV file");
+  }
+
+  /** Songsheet files loaded from input directory (for matching/combinging with coversheets) */
+  let inputSongsheets: LoadedPdf[] = [];
+  if (options.songsheetsDir) {
+    const songsheetsDir = path.resolve(process.cwd(), options.songsheetsDir);
+    try {
+      inputSongsheets = await loadPdfsFromDirectory(songsheetsDir);
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
+      return generateCommand.error("Could not load songsheets");
+    }
+    if (!inputSongsheets.length) {
+      return generateCommand.error("No songsheets loaded");
+    }
+    console.log(`Loaded ${inputSongsheets.length} songsheets`);
   }
 
   let { group, year } = options;
@@ -55,217 +75,74 @@ generateCommand.action(async (coversheetCsv, options) => {
       group = await input({ message: "Group name:", required: false });
     }
     if (!year) {
-      year = await input({
-        message: "Year:",
-        required: false,
-        default: new Date().getFullYear().toString(),
-      });
+      const currentYear = new Date().getFullYear().toString();
+      year = await input({ message: "Year:", required: false, default: currentYear });
     }
+  }
+  group = group?.trim();
+  year = year?.trim();
+
+  // Find suggested songsheet file matches for coversheets (with option to change/review)
+  let reviewedSongs: ReviewedSong[] = coversheetInputs.map(() => ({ output: "all" }));
+  if (inputSongsheets.length) {
+    const initialMatches = findSongsheetMatches(coversheetInputs, inputSongsheets);
+    reviewedSongs = await reviewSongsheetMatches(
+      coversheetInputs,
+      inputSongsheets,
+      initialMatches,
+      options.skipAll ? "skip" : "all",
+    );
   }
 
   // Ensure output directory (and any parents) exists before writing files
   const outputDir = path.resolve(process.cwd(), options.outputDir);
   fs.mkdirSync(outputDir, { recursive: true });
 
-  for (const song of songs) {
-    await generateSongDocument(song, { outputDir, group, year });
+  let coversheetCount = 0;
+  let combinedCount = 0;
+  let skippedCount = 0;
+  for (const [songIndex, song] of coversheetInputs.entries()) {
+    const { output, songsheetMatch } = reviewedSongs[songIndex];
+    if (output === "skip") {
+      console.log(chalk.gray(` - Skipping: 🚫 ${song.title}`));
+      skippedCount++;
+      continue;
+    }
+
+    console.log(chalk.gray(` - Generating: ${song.title}`));
+
+    /** Document that songsheet pages are appended to (coversheet, unless excluded from output) */
+    let outputPdf: PDFDocument;
+    if (output === "songsheet") {
+      outputPdf = await PDFDocument.create();
+      setDocumentMetadata(outputPdf, song);
+    } else {
+      outputPdf = await generateCoversheet(song, { group, year });
+
+      // NOTE: Coversheet must be written first, as appending songsheet pages modifies the document!
+      await writePdfDocument(outputPdf, `${song.title} (coversheet)`, outputDir);
+      coversheetCount++;
+    }
+
+    if (output === "coversheet") continue;
+
+    if (songsheetMatch) {
+      await appendPdfPages(outputPdf, songsheetMatch.file.document, songsheetMatch.pageIndices);
+      const outputFileName = `${song.title} ${options.mergedSuffix.trim()}`.trim();
+      await writePdfDocument(outputPdf, outputFileName, outputDir);
+      combinedCount++;
+    } else if (options.songsheetsDir) {
+      console.warn(chalk.yellow(`   - no songsheet${output === "songsheet" ? " (nothing written)" : ""}`));
+    }
   }
 
-  console.log(`Generated ${songs.length} coversheets`);
-  console.log(`Output to ${outputDir}`);
+  let successMessage = `Generated ${coversheetCount} coversheets`;
+  if (inputSongsheets.length) {
+    successMessage += ` and ${combinedCount} combined files`;
+  }
+  if (skippedCount) {
+    successMessage += ` (${skippedCount} ${skippedCount === 1 ? "song" : "songs"} skipped)`;
+  }
+  console.log(chalk.green(successMessage));
+  console.log(chalk.gray(`Output to ${outputDir}`));
 });
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Functions
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
-
-/** Generate individual coversheet PDF */
-const generateSongDocument = async (
-  song: SongsheetCsvItem,
-  args: Pick<CommandOptions, "group" | "outputDir" | "year">,
-) => {
-  console.log(`Generating coversheet (${song.title})`);
-
-  const document = await PDFDocument.create();
-  document.registerFontkit(fontkit);
-  const fontRegular = await loadFont(document, "Mulish-Regular.ttf");
-  const fontItalic = await loadFont(document, "Mulish-Italic.ttf");
-  const fontBold = await loadFont(document, "Mulish-Bold.ttf");
-
-  const page = document.addPage([inchesToUnits(8.5), inchesToUnits(11)]);
-  const { width, height } = page.getSize();
-
-  drawBorders(page);
-
-  const titleFontSize = 48;
-  const titleLocationY = height - inchesToUnits(2.5);
-
-  const maxTitleWidth = width - MARGIN_SIZE * 4;
-  const { height: titleHeight } = drawTextCentered(
-    page,
-    { y: titleLocationY },
-    song.title,
-    { font: fontBold, size: titleFontSize },
-    { lineSpacing: 10, maxWidth: maxTitleWidth },
-  );
-
-  const composerFontSize = 28;
-  const composerLocationY = titleLocationY - titleHeight - inchesToUnits(0.5) - composerFontSize;
-
-  drawTextCentered(page, { y: composerLocationY }, song.composer, {
-    font: fontItalic,
-    size: composerFontSize,
-    opacity: 0.7,
-  });
-
-  generateFooter(page, args, { font: fontRegular });
-
-  setDocumentMetadata(document, song);
-
-  const pdfBytes = await document.save();
-  const outputPath = path.join(args.outputDir, `${song.title} (Coversheet).pdf`);
-  fs.writeFileSync(outputPath, pdfBytes);
-};
-
-/**
- * Draw borders around page
- *
- * - Thin line in a rectangle
- * - Thick line in a rectangle with decorated corners
- */
-const drawBorders = (page: PDFPage) => {
-  const { height, width } = page.getSize();
-
-  /** Distance between thin border and page edge */
-  const thinBorderMargin = inchesToUnits(0.75);
-  const thinBorderPoints: Point[] = [
-    { x: thinBorderMargin, y: height - thinBorderMargin },
-    { x: width - thinBorderMargin, y: height - thinBorderMargin },
-    { x: width - thinBorderMargin, y: thinBorderMargin },
-    { x: thinBorderMargin, y: thinBorderMargin },
-  ];
-
-  thinBorderPoints.forEach((point, index, list) => {
-    const nextPointIndex = index < list.length - 1 ? index + 1 : 0;
-    const nextPoint = list[nextPointIndex];
-
-    page.drawLine({
-      start: point,
-      end: nextPoint,
-      thickness: 2,
-      lineCap: LineCapStyle.Round,
-    });
-  });
-
-  /** Distance that decoration line moves when stepping around in corners */
-  const decorationStepDistance = 18;
-  /**
-   * Distance between thick decoration border and page edge
-   *
-   * NOTE: Must be equal to decoration step distance in order to properly align thin border in middle of decoration!
-   */
-  const thickBorderMargin = thinBorderMargin - decorationStepDistance / 2;
-  const thickBorderPoints: Point[] = [
-    { x: thickBorderMargin, y: height - thickBorderMargin },
-    { x: width - thickBorderMargin, y: height - thickBorderMargin },
-    { x: width - thickBorderMargin, y: thickBorderMargin },
-    { x: thickBorderMargin, y: thickBorderMargin },
-  ];
-
-  thickBorderPoints.forEach((currentPoint, index, list) => {
-    const nextPointIndex = index < list.length - 1 ? index + 1 : 0;
-    const nextPoint = list[nextPointIndex];
-
-    const decorationThickness = 4;
-
-    let drawAngle = getAngleBetweenPoints(currentPoint, nextPoint);
-
-    const distanceBetweenPoints = getDistanceBetweenPoints(currentPoint, nextPoint);
-    /** Long page edge border should start where previous decoration (should have 😉) ended */
-    const borderStartPoint = getPointAlongAngle(
-      currentPoint,
-      drawAngle,
-      decorationStepDistance * 2,
-    );
-    /** Long page edge border should end where next decoration should start */
-    const decorationStartPoint = getPointAlongAngle(
-      currentPoint,
-      drawAngle,
-      distanceBetweenPoints - decorationStepDistance * 2,
-    );
-
-    // Draw page edge border leading from previous corner decoration to next corner decoration
-    page.drawLine({
-      start: borderStartPoint,
-      end: decorationStartPoint,
-      lineCap: LineCapStyle.Round,
-      thickness: decorationThickness,
-    });
-
-    /**
-     * Drawing movements required for corner decorations
-     *
-     * Corner decoration is a square that extends out past thinner border (centered around thin border point)
-     */
-    const decorationMovements: { angle: number; steps: number }[] = [
-      { angle: -90, steps: 1 },
-      { angle: 90, steps: 2 },
-      { angle: 90, steps: 1 },
-      { angle: 90, steps: 1 },
-      { angle: 90, steps: 2 },
-      { angle: 90, steps: 1 },
-    ];
-
-    let drawPoint = decorationStartPoint;
-    // biome-ignore lint/complexity/noForEach: 'foreach' was used in case the index was required 🤷
-    decorationMovements.forEach((movement) => {
-      const startPoint = drawPoint;
-      drawAngle += movement.angle;
-      const nextPoint = getPointAlongAngle(
-        drawPoint,
-        drawAngle,
-        movement.steps * decorationStepDistance,
-      );
-      drawPoint = nextPoint;
-
-      page.drawLine({
-        start: startPoint,
-        end: nextPoint,
-        lineCap: LineCapStyle.Round,
-        thickness: decorationThickness,
-      });
-    });
-  });
-};
-
-const generateFooter = (
-  page: PDFPage,
-  input: Pick<CommandOptions, "group" | "year">,
-  args: { font: PDFFont },
-) => {
-  // NOTE: Calculate year location first (to properly place group above)
-
-  const yearFontSize = 18;
-  const yearLocationY = inchesToUnits(1.25);
-
-  const groupFontSize = 28;
-  const groupLocationY = yearLocationY + yearFontSize + inchesToUnits(0.25);
-
-  if (input.group) {
-    drawTextCentered(page, { y: groupLocationY }, input.group, {
-      font: args.font,
-      size: groupFontSize,
-      opacity: 0.8,
-    });
-  }
-
-  if (input.year) {
-    drawTextCentered(page, { y: yearLocationY }, input.year.toString(), {
-      font: args.font,
-      size: yearFontSize,
-      opacity: 0.6,
-    });
-  }
-};
