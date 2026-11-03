@@ -6,14 +6,18 @@ import fontkit from "@pdf-lib/fontkit";
 import { Argument, Command, Option } from "commander";
 import { LineCapStyle, PDFDocument, type PDFFont, type PDFPage } from "pdf-lib";
 
+import chalk from "chalk";
 import { parseCsvFile } from "#src/utilities/file.util";
 import type { Point } from "#types/vector.types";
 import {
+  type LoadedPdf,
   UNITS_TO_INCH,
   drawTextCentered,
   inchesToUnits,
   loadFont,
+  loadPdfsFromDirectory,
   setDocumentMetadata,
+  writePdfDocument,
 } from "#utils/pdf.util";
 import {
   getAngleBetweenPoints,
@@ -32,7 +36,11 @@ export const generateCommand = new Command("generate-coversheets")
     ).makeOptionMandatory(),
   )
   .addOption(new Option("--group <group>", "Group name (for coversheet footer)"))
-  .addOption(new Option("--year <year>", "Year (for coversheet footer)"));
+  .addOption(new Option("--year <year>", "Year (for coversheet footer)"))
+  .addOption(new Option("--songsheets-dir <songsheetDir>", "Input directory for songsheet files"))
+  .addOption(
+    new Option("--merged-suffix <suffix>", "File suffix for merged files").default("(combined)"),
+  );
 
 type CommandOptions = ReturnType<(typeof generateCommand)["opts"]>;
 
@@ -41,11 +49,26 @@ type CommandOptions = ReturnType<(typeof generateCommand)["opts"]>;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 generateCommand.action(async (coversheetCsv, options) => {
-  let songs: SongsheetCsvItem[];
+  let coversheetInputs: SongsheetCsvItem[];
   try {
-    songs = parseCsvFile(coversheetCsv, songsheetCsvSchema, "log");
+    coversheetInputs = parseCsvFile(coversheetCsv, songsheetCsvSchema, "log");
   } catch (e) {
     return generateCommand.error("Could not load/parse CSV file");
+  }
+
+  let songsheetFiles: LoadedPdf[] = [];
+  if (options.songsheetsDir) {
+    const songsheetsDir = path.resolve(process.cwd(), options.songsheetsDir);
+    try {
+      songsheetFiles = await loadPdfsFromDirectory(songsheetsDir);
+    } catch (e) {
+      console.error(chalk.red((e as Error).message));
+      return generateCommand.error("Could not load songsheets");
+    }
+    if (!songsheetFiles.length) {
+      return generateCommand.error("No songsheets loaded");
+    }
+    console.log(`Loaded ${songsheetFiles.length} songsheets`);
   }
 
   let { group, year } = options;
@@ -55,23 +78,29 @@ generateCommand.action(async (coversheetCsv, options) => {
       group = await input({ message: "Group name:", required: false });
     }
     if (!year) {
-      year = await input({
-        message: "Year:",
-        required: false,
-        default: new Date().getFullYear().toString(),
-      });
+      const currentYear = new Date().getFullYear().toString();
+      year = await input({ message: "Year:", required: false, default: currentYear });
     }
   }
+  group = group?.trim();
+  year = year?.trim();
 
   // Ensure output directory (and any parents) exists before writing files
   const outputDir = path.resolve(process.cwd(), options.outputDir);
   fs.mkdirSync(outputDir, { recursive: true });
 
-  for (const song of songs) {
-    await generateSongDocument(song, { outputDir, group, year });
+  for (const song of coversheetInputs) {
+    console.log(`  - Generating: ${song.title}`);
+    const coversheetPdf = await generateSongDocument(song, { group, year });
+
+    if (songsheetFiles.length) {
+      // TODO
+    }
+
+    writePdfDocument(coversheetPdf, song.title, outputDir);
   }
 
-  console.log(`Generated ${songs.length} coversheets`);
+  console.log(`Generated ${coversheetInputs.length} coversheets`);
   console.log(`Output to ${outputDir}`);
 });
 
@@ -84,10 +113,8 @@ const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
 /** Generate individual coversheet PDF */
 const generateSongDocument = async (
   song: SongsheetCsvItem,
-  args: Pick<CommandOptions, "group" | "outputDir" | "year">,
-) => {
-  console.log(`Generating coversheet (${song.title})`);
-
+  args: Pick<CommandOptions, "group" | "year">,
+): Promise<PDFDocument> => {
   const document = await PDFDocument.create();
   document.registerFontkit(fontkit);
   const fontRegular = await loadFont(document, "Mulish-Regular.ttf");
@@ -124,9 +151,7 @@ const generateSongDocument = async (
 
   setDocumentMetadata(document, song);
 
-  const pdfBytes = await document.save();
-  const outputPath = path.join(args.outputDir, `${song.title} (Coversheet).pdf`);
-  fs.writeFileSync(outputPath, pdfBytes);
+  return document;
 };
 
 /**
