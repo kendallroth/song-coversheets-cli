@@ -1,13 +1,20 @@
 import path from "node:path";
 
-import { Separator, search, select } from "@inquirer/prompts";
+import { input, Separator, search, select } from "@inquirer/prompts";
 import chalk from "chalk";
 import Fuse from "fuse.js";
 
-import type { LoadedPdf } from "#utils/pdf.util";
+import { formatPageRange, type LoadedPdf, parsePageRange } from "#utils/pdf.util";
 
 /** Label for a song without a matched songsheet */
 const NO_SONGSHEET_LABEL = "(no songsheet)";
+
+/** Songsheet matched with a song */
+export interface SongsheetMatch {
+  file: LoadedPdf;
+  /** Indices of pages to include (defaults to all pages) */
+  pageIndices: number[];
+}
 
 /** Create fuzzy search over songsheet file names (without extensions) */
 const createSongsheetSearch = (songsheets: LoadedPdf[]) => {
@@ -63,8 +70,80 @@ export const findSongsheetMatches = (
   return matches;
 };
 
+/** Prompt for the songsheet to use for a song (sorted by fuzzy match) */
+const promptForSongsheet = (
+  songs: { title: string }[],
+  songIndex: number,
+  songsheets: LoadedPdf[],
+  matches: (SongsheetMatch | undefined)[],
+) => {
+  const songsheetSearch = createSongsheetSearch(songsheets);
+
+  return search<LoadedPdf | null>(
+    {
+      message: `Songsheet for "${songs[songIndex].title}"`,
+      default: matches[songIndex]?.file ?? null,
+      pageSize: 10,
+      theme: {
+        style: {
+          description: chalk.yellow,
+        },
+      },
+      source: (term) => {
+        const toChoice = (file: LoadedPdf) => {
+          const alreadyUsedByIdx = matches.findIndex((match) => match?.file === file);
+
+          return {
+            // Indicate songsheets already matched with another song
+            description:
+              alreadyUsedByIdx !== -1 && alreadyUsedByIdx !== songIndex
+                ? `Currently used by "${songs[alreadyUsedByIdx].title}"`
+                : undefined,
+            name: file.fileName,
+            value: file as LoadedPdf | null,
+          };
+        };
+
+        const searchTerm = term?.trim();
+        if (searchTerm) {
+          return songsheetSearch.search(searchTerm).map((result) => toChoice(result.item.file));
+        }
+
+        // Include all songsheets (closest to song title first), as title search may exclude the desired file
+        const rankedFiles = songsheetSearch.search(songs[songIndex].title).map((result) => result.item.file);
+        const otherFiles = songsheets.filter((file) => !rankedFiles.includes(file));
+
+        return [{ name: NO_SONGSHEET_LABEL, value: null }, ...[...rankedFiles, ...otherFiles].map(toChoice)];
+      },
+    },
+    { clearPromptOnDone: true },
+  );
+};
+
+/** Prompt for the pages to include from a matched songsheet */
+const promptForPageRange = async ({ file, pageIndices }: SongsheetMatch): Promise<number[]> => {
+  const pageRange = await input(
+    {
+      message: `Pages from "${file.fileName}" (${file.pages} pages):`,
+      default: formatPageRange(pageIndices),
+      prefill: "editable",
+      validate: (value) => {
+        try {
+          parsePageRange(value, file.pages);
+          return true;
+        } catch (e) {
+          return (e as Error).message;
+        }
+      },
+    },
+    { clearPromptOnDone: true },
+  );
+
+  return parsePageRange(pageRange, file.pages);
+};
+
 /**
- * Display matched songsheets and allow changing specific matches
+ * Display matched songsheets and allow changing specific matches or their included pages
  *
  * Songsheets can only be used once; selecting one used by another song moves it to the selected song.
  *
@@ -74,96 +153,98 @@ export const reviewSongsheetMatches = async (
   songs: { title: string }[],
   songsheets: LoadedPdf[],
   initialMatches: (LoadedPdf | undefined)[],
-): Promise<(LoadedPdf | undefined)[]> => {
-  const matches = [...initialMatches];
-  const songsheetSearch = createSongsheetSearch(songsheets);
+): Promise<(SongsheetMatch | undefined)[]> => {
+  const toMatch = (file: LoadedPdf): SongsheetMatch => ({
+    file,
+    pageIndices: file.document.getPageIndices(),
+  });
+
+  const songsheetMatches = initialMatches.map((file) => (file ? toMatch(file) : undefined));
   const titleWidth = Math.max(...songs.map((song) => song.title.length));
 
+  type SongEditOptionIdx = number | "continue";
   /** Selected song option for editing (or "continue" to finish) */
-  let activeSongEditOptionIdx: number | "continue" = "continue";
+  let activeSongEditOptionIdx: SongEditOptionIdx = "continue";
   while (true) {
     const songChoices = songs.map((song, songIndex) => {
       const title = song.title.padEnd(titleWidth);
-      const fileName = matches[songIndex]?.fileName;
+      const songsheetMatch = songsheetMatches[songIndex];
+      if (!songsheetMatch) {
+        return {
+          name: chalk.yellow(`${title}  →  ${NO_SONGSHEET_LABEL}`),
+          value: songIndex as SongEditOptionIdx,
+        };
+      }
+
+      // Only indicate selected pages when some have been excluded
+      const pagesLabel =
+        songsheetMatch.pageIndices.length < songsheetMatch.file.pages
+          ? chalk.gray(` (p. ${formatPageRange(songsheetMatch.pageIndices)} of ${songsheetMatch.file.pages})`)
+          : "";
 
       return {
-        name: fileName ? `${title}  →  ${fileName}` : chalk.yellow(`${title}  →  ${NO_SONGSHEET_LABEL}`),
-        value: songIndex as number | "continue",
+        name: `${title}  →  ${songsheetMatch.file.fileName}${pagesLabel}`,
+        value: songIndex as SongEditOptionIdx,
       };
     });
 
     // Display songs and current matches for review (user can edit by selecting a song)
-    activeSongEditOptionIdx = await select<number | "continue">(
+    activeSongEditOptionIdx = await select<SongEditOptionIdx>(
       {
         message: `Review songsheet matches ${chalk.gray("(select a song to change it)")}`,
         choices: [...songChoices, new Separator(), { name: "Continue", value: "continue" }],
         default: activeSongEditOptionIdx,
-        // Display the entire list at once (including separator and continue rows)
-        pageSize: songs.length + 2,
+        // Display the entire list at once, with extra space as long rows may wrap in narrow terminals
+        pageSize: (songChoices.length + 2) * 2,
       },
       { clearPromptOnDone: true },
     );
 
     if (activeSongEditOptionIdx === "continue") break;
 
-    // Display search for changing the songsheet for the selected song (sorted by fuzzy match)
     const songIndex: number = activeSongEditOptionIdx;
-    /** Selected songsheet option for the active song */
-    const activeSongMatchOptionIdx = await search<LoadedPdf | null>(
+    const songsheetMatch = songsheetMatches[songIndex];
+
+    const songEditAction = await select<"songsheet" | "pages" | "back">(
       {
-        message: `Songsheet for "${songs[songIndex].title}"`,
-        default: matches[songIndex] ?? null,
-        pageSize: 10,
-        theme: {
-          style: {
-            description: chalk.yellow,
+        message: `"${songs[songIndex].title}"`,
+        choices: [
+          {
+            name: `Change songsheet ${songsheetMatch ? chalk.gray(`(${songsheetMatch.file.fileName})`) : chalk.yellow(NO_SONGSHEET_LABEL)}`,
+            value: "songsheet",
           },
-        },
-        source: (term) => {
-          const toChoice = (file: LoadedPdf) => {
-            const usedByIndex = matches.indexOf(file);
-
-            return {
-              // Indicate songsheets already matched with another song
-              description:
-                usedByIndex !== -1 && usedByIndex !== songIndex
-                  ? `Currently used by "${songs[usedByIndex].title}"`
-                  : undefined,
-              name: file.fileName,
-              value: file as LoadedPdf | null,
-            };
-          };
-
-          const searchTerm = term?.trim();
-          if (searchTerm) {
-            return songsheetSearch.search(searchTerm).map((result) => toChoice(result.item.file));
-          }
-
-          // Include all songsheets (closest to song title first), as title search may exclude the desired file
-          const rankedFiles = songsheetSearch
-            .search(songs[songIndex].title)
-            .map((result) => result.item.file);
-          const otherFiles = songsheets.filter((file) => !rankedFiles.includes(file));
-
-          return [
-            { name: NO_SONGSHEET_LABEL, value: null },
-            ...[...rankedFiles, ...otherFiles].map(toChoice),
-          ];
-        },
+          {
+            name: songsheetMatch
+              ? `Change pages ${chalk.gray(`(${formatPageRange(songsheetMatch.pageIndices)} of ${songsheetMatch.file.pages})`)}`
+              : "Change pages",
+            value: "pages",
+            disabled: songsheetMatch ? false : NO_SONGSHEET_LABEL,
+          },
+          { name: "Back", value: "back" },
+        ],
       },
       { clearPromptOnDone: true },
     );
 
-    matches.forEach((file, index) => {
-      if (activeSongMatchOptionIdx && file === activeSongMatchOptionIdx) {
-        matches[index] = undefined;
-      }
-    });
-    matches[songIndex] = activeSongMatchOptionIdx ?? undefined;
+    if (songEditAction === "pages" && songsheetMatch) {
+      songsheetMatch.pageIndices = await promptForPageRange(songsheetMatch);
+    } else if (songEditAction === "songsheet") {
+      const selectedFile = await promptForSongsheet(songs, songIndex, songsheets, songsheetMatches);
+
+      // Selecting the current songsheet keeps its selected pages
+      if ((selectedFile ?? undefined) === songsheetMatch?.file) continue;
+
+      songsheetMatches.forEach((otherMatch, index) => {
+        if (selectedFile && otherMatch?.file === selectedFile) {
+          songsheetMatches[index] = undefined;
+        }
+      });
+      songsheetMatches[songIndex] = selectedFile ? toMatch(selectedFile) : undefined;
+    }
   }
 
-  const matchedCount = matches.filter(Boolean).length;
+  const matchedCount = songsheetMatches.filter(Boolean).length;
   console.log(`Matched ${matchedCount} of ${songs.length} songs to songsheets`);
 
-  return matches;
+  return songsheetMatches;
 };

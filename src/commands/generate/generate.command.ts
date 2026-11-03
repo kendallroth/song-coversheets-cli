@@ -15,7 +15,7 @@ import {
 } from "#utils/pdf.util";
 import { type SongsheetCsvItem, songsheetCsvSchema } from "./generate.schema";
 import { generateCoversheet } from "./generate-coversheet.util";
-import { findSongsheetMatches, reviewSongsheetMatches } from "./generate-matcher.util";
+import { findSongsheetMatches, reviewSongsheetMatches, type SongsheetMatch } from "./generate-matcher.util";
 
 export const MARGIN_SIZE = 0.5 * UNITS_TO_INCH;
 
@@ -75,7 +75,7 @@ generateCommand.action(async (coversheetCsv, options) => {
   year = year?.trim();
 
   // Find suggested songsheet file matches for coversheets (with option to change/review)
-  let songsheetMatches: (LoadedPdf | undefined)[] = [];
+  let songsheetMatches: (SongsheetMatch | undefined)[] = [];
   if (inputSongsheets.length) {
     const initialMatches = findSongsheetMatches(coversheetInputs, inputSongsheets);
     songsheetMatches = await reviewSongsheetMatches(coversheetInputs, inputSongsheets, initialMatches);
@@ -94,10 +94,11 @@ generateCommand.action(async (coversheetCsv, options) => {
     // NOTE: Coversheet must be written first, as appending songsheet pages modifies the document!
     await writePdfDocument(coversheetPdf, `${song.title} (coversheet)`, outputDir);
 
-    const songsheetPdf = songsheetMatches[songIndex]?.document;
-    if (songsheetPdf) {
-      await appendPdfPages(coversheetPdf, songsheetPdf);
-      await writePdfDocument(coversheetPdf, `${song.title} ${options.mergedSuffix.trim()}`, outputDir);
+    const songsheetMatch = songsheetMatches[songIndex];
+    if (songsheetMatch) {
+      await appendPdfPages(coversheetPdf, songsheetMatch.file.document, songsheetMatch.pageIndices);
+      const combinedFileName = `${song.title} ${options.mergedSuffix.trim()}`.trim();
+      await writePdfDocument(coversheetPdf, combinedFileName, outputDir);
       combinedCount++;
     } else if (options.songsheetsDir) {
       console.warn(chalk.yellow("   - no songsheet"));

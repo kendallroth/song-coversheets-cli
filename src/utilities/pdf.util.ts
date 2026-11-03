@@ -61,12 +61,63 @@ export const loadPdfsFromDirectory = async (directoryPath: string): Promise<Load
   return pdfs;
 };
 
-/** Append all pages from source document to the end of target document */
-export const appendPdfPages = async (target: PDFDocument, source: PDFDocument) => {
-  const pages = await target.copyPages(source, source.getPageIndices());
+/** Append specified pages from source document to the end of target document */
+export const appendPdfPages = async (target: PDFDocument, source: PDFDocument, pageIndices: number[]) => {
+  const pages = await target.copyPages(source, pageIndices);
   for (const page of pages) {
     target.addPage(page);
   }
+};
+
+/**
+ * Parse page range text (ie. "2-7" or "1,3-5") into sorted, unique page indices
+ *
+ * @throws Error describing the problem if text is invalid or pages are out of range
+ */
+export const parsePageRange = (text: string, maxPages: number): number[] => {
+  if (!text.trim()) {
+    throw new Error("Enter at least one page");
+  }
+
+  const pageIndices = new Set<number>();
+  for (const part of text.split(",").map((value) => value.trim())) {
+    const match = part.match(/^(\d+)(?:\s*-\s*(\d+))?$/);
+    if (!match) {
+      throw new Error(`Invalid page range "${part}" (use a format like 2-7 or 1,3-5)`);
+    }
+
+    const start = Number(match[1]);
+    const end = Number(match[2] ?? match[1]);
+    if (start > end) {
+      throw new Error(`Page range "${part}" is reversed`);
+    }
+    if (start < 1 || end > maxPages) {
+      throw new Error(`Page range "${part}" must be between 1 and ${maxPages}`);
+    }
+
+    for (let page = start; page <= end; page++) {
+      pageIndices.add(page - 1);
+    }
+  }
+
+  return [...pageIndices].sort((a, b) => a - b);
+};
+
+/** Format sorted page indices as compact range text (ie. "1,3-5") */
+export const formatPageRange = (pageIndices: number[]): string => {
+  const ranges: string[] = [];
+
+  let rangeStart = 0;
+  for (let i = 0; i < pageIndices.length; i++) {
+    if (pageIndices[i + 1] === pageIndices[i] + 1) continue;
+
+    const startPage = pageIndices[rangeStart] + 1;
+    const endPage = pageIndices[i] + 1;
+    ranges.push(startPage === endPage ? `${startPage}` : `${startPage}-${endPage}`);
+    rangeStart = i + 1;
+  }
+
+  return ranges.join(",");
 };
 
 /**
